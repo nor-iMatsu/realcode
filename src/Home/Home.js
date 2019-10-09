@@ -1,0 +1,484 @@
+import React, { Component } from "react";
+import { instanceOf } from "prop-types";
+import { withCookies, Cookies } from "react-cookie";
+import './Home.css';
+
+require("colors");
+
+const BASE_URL = 'https://api.realcode.link';
+const NUMBER_OF_EXERCISES_TO_ANSWER = 3;
+
+class Home extends Component {
+  static propTypes = {
+    cookies: instanceOf(Cookies).isRequired
+  };
+
+  /**
+   * Constructor of this class
+   * @param {*} props
+   */
+  constructor(props) {
+    super(props);
+    this.state = {
+      isLoading: false,
+      isError: false,
+      hasFinished: false,
+      exerciseIndexListCurrentIndex: 0,
+      exerciseIndexList: [],
+      currentExercise: null,
+      dataFetchingTime: "",
+      selectedName: "", // Q0
+      selectedValidity: "",  // Q1
+      reasonForValidity: "", // Q1 Reason
+      selectedDifficulty: "", // Q2
+      timeToAnswer: "", // Q3
+      selectedTypes: [], // Q4
+      descriptionForType: "", // Q4 Description
+      names: [
+        { value: "", display: "(選択してください)" },
+        { value: "名無しさん1", display: "名無しさん1" },
+        { value: "名無しさん2", display: "名無しさん2" }
+      ],
+      validity: [
+        { value: "", display: "(選択してください)" },
+        { value: "そう思う", display: "そう思う" },
+        { value: "そう思わない", display: "そう思わない" },
+        { value: "わからない", display: "わからない" }
+      ],
+      difficulties: [
+        { value: "", display: "(選択してください)" },
+        { value: "1", display: "1" },
+        { value: "2", display: "2" },
+        { value: "3", display: "3" },
+        { value: "4", display: "4" },
+        { value: "5", display: "5" }
+      ],
+      types: [
+        { value: "例外処理", display: "例外処理" },
+        { value: "メンテナンス", display: "メンテナンス" },
+        { value: "自分が経験した・見たことのあるバグの解決方法", display: "自分が経験した・見たことのあるバグの解決方法" },
+        { value: "ライブラリやAPIの使い方", display: "ライブラリやAPIの使い方" },
+        { value: "アルゴリズム", display: "アルゴリズム" },
+        { value: "Web", display: "Web" },
+        { value: "文法", display: "文法" },
+        { value: "デザイン", display: "デザイン" },
+        { value: "データベース", display: "データベース" }
+      ]
+    };
+  }
+
+  /**
+   * ComponentDidMount
+   */
+  componentDidMount() {
+    // const { cookies } = this.props;
+    if (!this.state.currentExercise) {
+      this.initialize();
+    }
+  }
+
+  /**
+   * fetch an exercise
+   */
+
+  async initialize() {
+    this.setState({
+      isLoading: true
+    });
+
+    try {
+      // 問題数をロード
+      await this.fetchNumberOfExercise();
+
+      // 回答する問題番号を決定
+      const numberOfExercise = this.state.numberOfExercise;
+      let exerciseIndexList = [];
+      for (let i = 0; i < NUMBER_OF_EXERCISES_TO_ANSWER; i++) {
+        // TODO: 重複を除去する
+        const quizIndex = Math.floor(Math.random() * (numberOfExercise));
+        exerciseIndexList.push(quizIndex);
+      }
+
+
+      this.setState({
+        exerciseIndexList: exerciseIndexList
+      })
+
+      // 最初の問題をロード
+      const firstIndex = exerciseIndexList[0];
+      await this.fetchExercise(firstIndex);
+
+      // 終わり
+      this.setState({
+        isLoading: false
+      });
+
+    } catch (err) {
+      console.error(err);
+      this.setState({
+        isLoading: false,
+        isError: true
+      });
+    }
+  }
+
+  async goToNext() {
+    const exerciseIndexList = this.state.exerciseIndexList;
+    const currentQuizIndex = exerciseIndexList[this.state.exerciseIndexListCurrentIndex];
+
+    const name = this.state.selectedName;
+    const validity = this.state.selectedValidity;
+    const reasonForValidity = this.state.reasonForValidity;
+    const difficulty = this.state.selectedDifficulty;
+    const timeToAnswer = this.state.timeToAnswer;
+    const selectedTypes = this.state.selectedTypes;
+    const descriptionForType = this.state.descriptionForType;
+    const dataFetchingTime = this.state.dataFetchingTime
+
+    try {
+      await this.postAnswer(currentQuizIndex, name, validity, reasonForValidity, difficulty, timeToAnswer, selectedTypes, descriptionForType, dataFetchingTime);
+      await this.loadNextExercise();
+
+    } catch(err) {
+      console.error(err);
+    }
+  }
+
+  async loadNextExercise() {
+    this.setState({
+      isLoading: true,
+      // Reset all answers
+      selectedValidity: "",  // Q1
+      reasonForValidity: "", // Q1 Reason
+      selectedDifficulty: "", // Q2
+      timeToAnswer: "", // Q3
+      selectedTypes: [], // Q4
+      descriptionForType: "", // Q4 Description
+    });
+
+    const exerciseIndexListCurrentIndex = this.state.exerciseIndexListCurrentIndex;
+    const exerciseIndexListNextIndex = exerciseIndexListCurrentIndex + 1;
+
+    // 問題がもうないとき
+    if (!(exerciseIndexListNextIndex < NUMBER_OF_EXERCISES_TO_ANSWER)) {
+      this.setState({
+        isLoading: false,
+        hasFinished: true
+      });
+      return;
+    }
+
+    // 続きの問題があるとき
+    this.setState({
+      exerciseIndexListCurrentIndex: exerciseIndexListNextIndex,
+    })
+
+    try {
+      const nextQuizIndex = this.state.exerciseIndexList[exerciseIndexListNextIndex];
+      await this.fetchExercise(nextQuizIndex);
+
+      this.setState({
+        isLoading: false
+      });
+
+    } catch(err) {
+      console.error(err);
+      this.setState({
+        isLoading: false,
+        isError: true
+      });
+    }
+  }
+
+  // TODO: 以下のメソッドからstateを除去する．
+  async fetchNumberOfExercise() {
+    const url = `${BASE_URL}/exercise-number`;
+    const self = this;
+
+    await fetch(url)
+      .then(response => {
+        return response.json();
+      })
+      .then(responseBody => {
+        self.setState({
+          numberOfExercise: responseBody.number
+        });
+      })
+      .catch(err => {
+        console.error(err);
+      });
+  }
+
+  async fetchExercise(quizIndex) {
+    const url = `${BASE_URL}/exercise?index=${quizIndex}`;
+    const self = this;
+
+    await fetch(url)
+      .then(response => {
+        return response.json();
+      })
+      .then(responseBody => {
+        const exercise = responseBody.exercise;
+        const dataFetchingTime = (new Date()).toString()
+        self.setState({
+          currentExercise: exercise,
+          dataFetchingTime: dataFetchingTime
+        });
+      })
+      .catch(err => {
+        console.error(err);
+      });
+  }
+
+  async postAnswer(quizIndex, name, validity, reasonForValidity, difficulty, timeToAnswer, selectedTypes, descriptionForType, dataFetchingTime) {
+
+    const dataPostingTime = (new Date()).toString()
+
+    const url = `${BASE_URL}/answer`;
+    const method = "POST";
+    const headers = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    };
+    const body = JSON.stringify({
+      "quizIndex": quizIndex,
+      "name": name,
+      "validity": validity,
+      "reasonForValidity": reasonForValidity,
+      "difficulty": difficulty,
+      "timeToAnswer": timeToAnswer,
+      "selectedTypes": selectedTypes.join('@'),
+      "descriptionForType": descriptionForType,
+      "dataFetchingTime": dataFetchingTime,
+      "dataPostingTime": dataPostingTime
+    });
+
+    return fetch(url, {method, headers, body})
+  }
+
+  /**
+   * Render
+   */
+  render() {
+    if (this.state.isError) {
+      return (
+        <div className="App">
+          <p>An error occurred.</p>
+        </div>
+      );
+    }
+
+    if (this.state.hasFinished) {
+      return (
+        <div className="App">
+          <p>End</p>
+        </div>
+      )
+    }
+
+    if (this.state.isLoading | (this.state.currentExercise === null)) {
+      return (
+        <div className="App">
+          <p>Loading...</p>
+        </div>
+      );
+    }
+
+    // extract information
+    const exercise_raw = this.state.currentExercise;
+    const exercise = {
+      title: exercise_raw.title,
+      bodyHTML: exercise_raw.bodyHTML,
+      answerTitle: exercise_raw.pull_request.title,
+      answerBodyHTML: exercise_raw.pull_request.bodyHTML,
+      code_before: exercise_raw.code_change.before_body.split("\n"),
+      code_after: exercise_raw.code_change.after_body.split("\n"),
+      file_name: exercise_raw.code_change.file_name,
+      lang: exercise_raw.lang
+    };
+
+    // Calculate code diff
+    const codeDiffComponents = [];
+    const diff = require("diff").diffLines(exercise_raw.code_change.before_body, exercise_raw.code_change.after_body);
+
+    diff.forEach((part) => {
+      const color = part.added ? "green" : part.removed ? "red" : "grey";
+      if (part.added) {
+        codeDiffComponents.push(
+          <div style={{ color: color }} key={part.value}>{part.value}</div>
+        );
+      }
+    });
+
+    return (
+      <div className="container">
+        <script src="https://cdn.jsdelivr.net/gh/google/code-prettify@master/loader/run_prettify.js"></script>
+        <div className="row">
+          <h2 className="font-weight-bold mb-4">Quiz: {exercise.title}</h2>
+        </div>
+        <div
+          className="row"
+          dangerouslySetInnerHTML={{ __html: exercise.bodyHTML }}
+        ></div>
+
+        <hr></hr>
+
+        <div className="row">
+          <h2 className="font-weight-bold mb-4">Answer code</h2>
+        </div>
+
+        <div>
+          <h4 className="font-weight-light mb-4">{exercise.file_name}</h4>
+        </div>
+
+        <pre className="prettyprint linenums">
+          <code>{codeDiffComponents}</code>
+        </pre>
+
+        <div className="row">
+          <h2 className="font-weight-bold mb-4">
+            Answer description: {exercise.answerTitle}
+          </h2>
+        </div>
+        {
+          <div
+            className="row"
+            dangerouslySetInnerHTML={{ __html: exercise.answerBodyHTML }}
+          ></div>
+        }
+
+        {/* 回答フォーム */}
+        {/*  */}
+        <div className="cp_form">
+          <form>
+            <h2 className="font-weight-bold mb-4">Questionnaire</h2>
+            {/* Q0. 名前 */}
+            <h4 className="font-weight-light mb-4">
+              Q0. 名前
+            </h4>
+            <div className="cp_group cp_ipselect">
+              <select
+                className="cp_sl"
+                required
+                value={this.state.selectedName}
+                onChange={e =>
+                  this.setState({ selectedName: e.target.value })
+                }
+              >
+              {this.state.names.map(tmp => (
+                <option key={tmp.value} value={tmp.value}>
+                  {tmp.display}
+                </option>
+              ))}
+              </select>
+              <i className="bar"></i>
+            </div>
+
+            {/* Q1. 妥当性 */}
+            <h4 className="font-weight-light mb-4">
+              Q1.
+              この問題は、プログラミングの演習問題として良い問題であると思いますか？
+            </h4>
+            <div className="cp_group cp_ipselect">
+              <select
+                className="cp_sl"
+                required
+                value={this.state.selectedValidity}
+                onChange={e =>
+                  this.setState({ selectedValidity: e.target.value })
+                }
+              >
+              {this.state.validity.map(tmp => (
+                <option key={tmp.value} value={tmp.value}>
+                  {tmp.display}
+                </option>
+              ))}
+              </select>
+              <i className="bar"></i>
+            </div>
+            <div className="cp_group">
+              <textarea required="required" rows="5" onChange={ e => { this.setState({ reasonForValidity: e.target.value })}}></textarea>
+              <label className="cp_label" htmlFor="textarea">そう思わないと答えた場合、理由をお書きください</label>
+              <i className="bar"></i>
+            </div>
+
+            <h4 className="font-weight-bold mb-4">
+              以降の質問は、Q1.で「そう思う」と回答した場合に答えてください
+            </h4>
+
+            {/* Q2. 難易度 */}
+            <h4 className="font-weight-light mb-4">
+              Q2. この演習問題の、あなたにとっての難易度を教えてください (1が最も簡単 -- 5が最も難しい)
+            </h4>
+            <div className="cp_group cp_ipselect">
+              <select
+                className="cp_sl"
+                required
+                value={this.state.selectedDifficulty}
+                onChange={e =>
+                  this.setState({ selectedDifficulty: e.target.value })
+                }
+              >
+              {this.state.difficulties.map(tmp => (
+                <option key={tmp.value} value={tmp.value}>
+                  {tmp.display}
+                </option>
+              ))}
+              </select>
+              <i className="bar"></i>
+            </div>
+
+            {/* Q3. 回答時間 */}
+            <h4 className="font-weight-light mb-4">
+              Q3. 問題文、解答コード、解説文を読むのに費やした合計時間を教えてください
+            </h4>
+            <div className="cp_group">
+              <input type="text" required="required" onChange={ e => this.setState({ timeToAnswer: e.target.value })} />
+              <label className="cp_label" htmlFor="input">時間をお書きください (例：30secs, 1min, 15mins)</label>
+              <i className="bar"></i>
+            </div>
+
+            {/* Q4. 問題の種類 */}
+            <h4 className="font-weight-light mb-4">
+              Q4. この問題から学べる内容を選択してください
+            </h4>
+            {
+              this.state.types.map(tmp => (
+                <div className="checkbox" key={tmp.value}>
+                <label>
+                  <input type="checkbox" onChange={ e => {
+                    if(e.target.checked) {
+                      let newSelectedTypes = this.state.selectedTypes.slice(0);
+                      newSelectedTypes.push(tmp.value);
+                      this.setState({ selectedTypes: newSelectedTypes });
+                    } else {
+                      const newSelectedTypes = this.state.selectedTypes.filter(element => element !== tmp.value);
+                      this.setState({ selectedTypes: newSelectedTypes });
+                    }
+                  } }/>
+                  <i className="ch_bar"></i>{tmp.display}
+                </label>
+              </div>
+              ))
+            }
+
+            <div className="cp_group">
+              <textarea required="required" rows="5" onChange={ e => this.setState({ descriptionForType: e.target.value })}></textarea>
+              <label className="cp_label" htmlFor="textarea">上記の選択肢以外の内容がある場合は自由に記述してください</label>
+              <i className="bar"></i>
+            </div>
+          </form>
+          <div className="btn_cont">
+            <button
+              className="btn"
+              type="button"
+              onClick={ () => this.goToNext() }
+            ><span>Submit</span></button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
+export default withCookies(Home);
